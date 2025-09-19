@@ -118,5 +118,29 @@ Notes:
 - Tweets are matched to nearest previous and next closes per symbol and labeled bullish/bearish/neutral using a return threshold.
 - Adjust `--threshold` (e.g., 1% or 2%) to control label sparsity and class balance.
 - For pre-labeled data, ensure a `label` column exists; omit `--prices-csv`.
+- To name your custom model "senti1", save to `models/senti1.joblib` instead of the default.
+
+## Evaluate senti1 vs VADER
+Compare your trained model against VADER on labeled data (either pre-labeled, or derived from prices like training):
+
+Using derived labels (same threshold):
+```
+python evaluate.py \
+  --tweets-csv stock_tweets.csv \
+  --prices-csv stock_yfinance_data.csv \
+  --threshold 0.01 \
+  --model models/senti1.joblib \
+  --limit 20000
+```
+
+Using a pre-labeled CSV with columns `text,label`:
+```
+python evaluate.py \
+  --labels-csv path/to/labeled.csv \
+  --model models/senti1.joblib \
+  --limit 20000
+```
+
+It prints JSON containing accuracy, weighted F1, and a classification report for both VADER and your model.
 
 
