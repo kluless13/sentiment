@@ -142,6 +142,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--prices-csv", help="Prices CSV for labeling (required if --tweets-csv used)")
     p.add_argument("--threshold", type=float, default=0.01, help="Return threshold for labeling when deriving")
     p.add_argument("--model", required=True, help="Path to trained scikit model (e.g., models/senti1.joblib)")
+    p.add_argument("--skip-vader", action="store_true", help="Skip VADER evaluation if not installed or for speed")
     p.add_argument("--limit", type=int, default=None, help="Limit examples for quick evaluation")
     p.add_argument("-v", action="count", default=0, help="Increase verbosity")
     return p
@@ -169,20 +170,25 @@ def main(argv: Optional[List[str]] = None) -> int:
         texts = df["text"].astype(str).tolist()
         y_true = df["label"].astype(str).tolist()
 
-        y_vader = vader_predict(texts)
-        acc_v, f1_v, rep_v = evaluate(y_true, y_vader)
+        res_vader = None
+        if not args.skip_vader:
+            try:
+                y_vader = vader_predict(texts)
+                acc_v, f1_v, rep_v = evaluate(y_true, y_vader)
+                res_vader = {"accuracy": acc_v, "f1_weighted": f1_v, "report": rep_v}
+            except Exception as exc:
+                logging.warning("Skipping VADER evaluation: %s", exc)
 
         y_model = model_predict(args.model, texts)
         acc_m, f1_m, rep_m = evaluate(y_true, y_model)
 
-        print(json.dumps(
-            {
-                "vader": {"accuracy": acc_v, "f1_weighted": f1_v, "report": rep_v},
-                "model": {"accuracy": acc_m, "f1_weighted": f1_m, "report": rep_m},
-                "n": len(texts),
-            },
-            ensure_ascii=False,
-        ))
+        output = {
+            "model": {"accuracy": acc_m, "f1_weighted": f1_m, "report": rep_m},
+            "n": len(texts),
+        }
+        if res_vader is not None:
+            output["vader"] = res_vader
+        print(json.dumps(output, ensure_ascii=False))
         return 0
     except Exception as exc:
         logging.exception("Evaluation failed: %s", exc)
