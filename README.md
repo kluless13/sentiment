@@ -295,6 +295,13 @@ python backtest.py \
 ```
 Output includes number of days, IC (correlation of sentiment vs next-day return), and hit-rate (directional accuracy).
 
+### What IC and hit-rate mean
+- Information Coefficient (IC): Pearson correlation between the model’s daily sentiment signal (e.g., mean_score) and subsequent forward return. Ranges from -1 to 1.
+  - Higher absolute IC indicates stronger monotonic relationship. As a rule of thumb in quant: 0.02–0.05 weak/usable, 0.05–0.10 decent, >0.10 strong for single signals.
+- Hit-rate: Fraction of days where the signal’s sign matches the next return’s sign (directional accuracy).
+  - >50% indicates positive edge; combine with IC to judge both rank and direction.
+Use both: IC captures rank strength; hit-rate captures practical directionality. Apply filters (min_docs, min_abs_score) to trade coverage for quality.
+
 ## Models and scores
 Summary of trained models, datasets, and key metrics observed in this repo.
 

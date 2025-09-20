@@ -19,6 +19,10 @@ env/
 *.parquet
 data/
 models/
+# keep selected, versioned weights
+!models/finance_supervised_v1.joblib
+!models/macro_news_daily_lr_v1.joblib
+!models/finance_tweets_intraday_q3070_nf10.joblib
 
 # Notebooks checkpoints
 .ipynb_checkpoints/
