@@ -278,6 +278,18 @@ python sweep_intraday.py \
   --limit 100000
 ```
 The script prints JSON with training metrics and backtest IC/hit-rate per configuration.
+
+## Collectors and quick comparison
+- FinViz headlines collector (per ticker): `collectors/finviz.py`
+- Generic RSS headlines: `collectors/rss.py`
+
+Compare VADER vs finance models on recent FinViz headlines for a ticker:
+```
+python compare_headlines.py --ticker NVDA \
+  --finance-model models/finance_current.joblib \
+  --signals-model models/finance_signals_current.joblib
+```
+Outputs a JSON with number of headlines and mean scores per method for fast eyeballing.
 ## Backtesting aggregated signals
 Compute a simple daily signal → forward returns IC and hit-rate:
 ```
