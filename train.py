@@ -301,6 +301,13 @@ def train_model(
             labeled = tweets.rename(columns={"Tweet": "text"}).copy()
             labeled["text"] = labeled["text"].astype(str).map(normalize_text)
 
+    # Ensure we have a text column for modeling
+    if "text" not in labeled.columns:
+        if "Tweet" in labeled.columns:
+            labeled["text"] = labeled["Tweet"].astype(str).map(normalize_text)
+        else:
+            raise ValueError("Prepared dataset must contain a text-like column (e.g., 'Tweet' or provide --labels-csv).")
+
     # If using time-based split, sort by Date when available to preserve temporal order
     if time_split and "Date" in labeled.columns:
         labeled = labeled.sort_values("Date").reset_index(drop=True)
