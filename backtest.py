@@ -75,18 +75,31 @@ def predict_texts(model_path: str, texts: pd.Series) -> pd.DataFrame:
 def aggregate_daily(corpus: pd.DataFrame, preds: pd.DataFrame, date_col: str, stock_col: str) -> pd.DataFrame:
     data = corpus[[date_col, stock_col]].copy()
     data["date"] = pd.to_datetime(data[date_col]).dt.date
-    agg = pd.concat([data[["date", stock_col]].reset_index(drop=True), preds.reset_index(drop=True)], axis=1)
+    base = pd.concat([data[["date", stock_col]].reset_index(drop=True), preds.reset_index(drop=True)], axis=1)
     # Simple numeric score per label if no probabilities
-    if "score" not in agg.columns:
+    if "score" not in base.columns:
         mapping = {"bullish": 1.0, "neutral": 0.0, "bearish": -1.0}
-        agg["score"] = agg["label"].map(mapping).astype(float)
-    grouped = agg.groupby([stock_col, "date"]).agg(
+        base["score"] = base["label"].map(mapping).astype(float)
+
+    # Mean score and document count per (ticker, date)
+    agg1 = base.groupby([stock_col, "date"], as_index=False).agg(
         mean_score=("score", "mean"),
         n_docs=("score", "size"),
-        bullish=(lambda x: (agg.loc[x.index, "label"] == "bullish").sum()),
-        bearish=(lambda x: (agg.loc[x.index, "label"] == "bearish").sum()),
-        neutral=(lambda x: (agg.loc[x.index, "label"] == "neutral").sum()),
-    ).reset_index()
+    )
+
+    # Label counts using crosstab then merge back
+    ct = pd.crosstab(index=[base[stock_col], base["date"]], columns=base["label"]).reset_index()
+    for lbl in ["bullish", "bearish", "neutral"]:
+        if lbl not in ct.columns:
+            ct[lbl] = 0
+    ct = ct.rename(columns={"bullish": "bullish", "bearish": "bearish", "neutral": "neutral"})
+
+    grouped = pd.merge(
+        agg1,
+        ct[[stock_col, "date", "bullish", "bearish", "neutral"]],
+        on=[stock_col, "date"],
+        how="left",
+    ).fillna({"bullish": 0, "bearish": 0, "neutral": 0})
     return grouped
 
 
