@@ -120,6 +120,104 @@ def label_by_forward_return(
     return df
 
 
+def _ensure_dt(series: pd.Series) -> pd.Series:
+    return pd.to_datetime(series, utc=False, errors="coerce")
+
+
+def label_by_horizon(
+    tweets: pd.DataFrame,
+    prices: pd.DataFrame,
+    horizon: pd.Timedelta,
+    benchmark: Optional[pd.DataFrame] = None,
+    threshold: float = 0.01,
+    threshold_mode: str = "absolute",
+    q_low: float = 0.3,
+    q_high: float = 0.7,
+    date_col: str = "Date",
+    stock_col: str = "Stock Name",
+    close_col: str = "Close",
+) -> pd.DataFrame:
+    tweets = tweets.copy()
+    prices = prices.copy()
+    tweets[date_col] = _ensure_dt(tweets[date_col])
+    prices[date_col] = _ensure_dt(prices[date_col])
+    tweets = tweets.dropna(subset=[date_col, stock_col])
+    prices = prices.dropna(subset=[date_col, stock_col, close_col])
+
+    bench = None
+    if benchmark is not None:
+        bench = benchmark.copy()
+        bench[date_col] = _ensure_dt(bench[date_col])
+        bench = bench.dropna(subset=[date_col, close_col]).sort_values(date_col).reset_index(drop=True)
+
+    symbols = sorted(set(tweets[stock_col].astype(str)) & set(prices[stock_col].astype(str)))
+    frames = []
+    for sym in symbols:
+        t_sym = tweets[tweets[stock_col].astype(str) == sym].sort_values(date_col)
+        p_sym = prices[prices[stock_col].astype(str) == sym].sort_values(date_col)
+        if t_sym.empty or p_sym.empty:
+            continue
+        # Price at tweet time (backward) and at t+h (backward)
+        base = pd.merge_asof(
+            t_sym[[date_col, stock_col]],
+            p_sym[[date_col, close_col]],
+            on=date_col,
+            direction="backward",
+        ).rename(columns={close_col: "p0"})
+        future_times = t_sym[[date_col]].copy()
+        future_times[date_col] = future_times[date_col] + horizon
+        fut = pd.merge_asof(
+            future_times.sort_values(date_col),
+            p_sym[[date_col, close_col]],
+            on=date_col,
+            direction="backward",
+        ).rename(columns={close_col: "p1"})
+        df_sym = base[[date_col, stock_col]].copy()
+        df_sym["p0"] = base["p0"].values
+        df_sym["p1"] = fut["p1"].values
+        df_sym = df_sym.join(t_sym.drop(columns=[date_col, stock_col]).reset_index(drop=True))
+
+        if bench is not None:
+            b0 = pd.merge_asof(
+                t_sym[[date_col]].sort_values(date_col),
+                bench[[date_col, close_col]],
+                on=date_col,
+                direction="backward",
+            ).rename(columns={close_col: "b0"})
+            ft = t_sym[[date_col]].copy()
+            ft[date_col] = ft[date_col] + horizon
+            b1 = pd.merge_asof(
+                ft.sort_values(date_col),
+                bench[[date_col, close_col]],
+                on=date_col,
+                direction="backward",
+            ).rename(columns={close_col: "b1"})
+            df_sym["b0"] = b0["b0"].values
+            df_sym["b1"] = b1["b1"].values
+
+        frames.append(df_sym)
+
+    if not frames:
+        raise ValueError("No data after horizon alignment.")
+    df = pd.concat(frames, ignore_index=True)
+    df = df.dropna(subset=["p0", "p1"]).reset_index(drop=True)
+    ret = (df["p1"].astype(float) / df["p0"].astype(float)) - 1.0
+    if bench is not None:
+        mask = df[["b0", "b1"]].notna().all(axis=1)
+        bench_ret = (df.loc[mask, "b1"].astype(float) / df.loc[mask, "b0"].astype(float)) - 1.0
+        ret.loc[mask] = ret.loc[mask] - bench_ret.values
+
+    if threshold_mode == "quantile":
+        lo = float(np.quantile(ret.dropna(), q_low))
+        hi = float(np.quantile(ret.dropna(), q_high))
+        df["forward_return"] = ret
+        df["label"] = np.where(ret > hi, "bullish", np.where(ret < lo, "bearish", "neutral"))
+    else:
+        df["forward_return"] = ret
+        df["label"] = np.where(ret > threshold, "bullish", np.where(ret < -threshold, "bearish", "neutral"))
+    return df
+
+
 def build_pipeline(
     classifier: str = "logreg",
     class_weight: Optional[str] = None,
@@ -152,6 +250,11 @@ def train_model(
     labels_label_col: Optional[str],
     output_path: str,
     threshold: float,
+    horizon_minutes: Optional[int],
+    benchmark_csv: Optional[str],
+    threshold_mode: str,
+    q_low: float,
+    q_high: float,
     test_size: float,
     random_state: int,
     limit: Optional[int],
@@ -176,7 +279,21 @@ def train_model(
             tweets = tweets.iloc[:limit].copy()
         if prices_csv:
             prices = load_prices(prices_csv)
-            labeled = label_by_forward_return(tweets, prices, threshold=threshold)
+            if horizon_minutes is not None and horizon_minutes > 0:
+                horizon = pd.Timedelta(minutes=int(horizon_minutes))
+                bench = load_prices(benchmark_csv) if benchmark_csv else None
+                labeled = label_by_horizon(
+                    tweets,
+                    prices,
+                    horizon=horizon,
+                    benchmark=bench,
+                    threshold=threshold,
+                    threshold_mode=threshold_mode,
+                    q_low=q_low,
+                    q_high=q_high,
+                )
+            else:
+                labeled = label_by_forward_return(tweets, prices, threshold=threshold)
         else:
             # Expect a pre-labeled CSV with 'label' column in tweets
             if "label" not in tweets.columns:
@@ -234,6 +351,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--labels-label-col", default=None, help="Label column name in labels CSV (default: label)")
     p.add_argument("--output", default="models/sentiment_pipeline.joblib", help="Output path for model")
     p.add_argument("--threshold", type=float, default=0.01, help="Return threshold for labels (e.g., 0.01 = 1%)")
+    p.add_argument("--horizon-minutes", type=int, default=None, help="Use intraday horizon minutes for labeling (e.g., 30, 60, 240)")
+    p.add_argument("--benchmark-csv", default=None, help="Benchmark prices CSV (same schema) to compute abnormal returns")
+    p.add_argument("--threshold-mode", choices=["absolute", "quantile"], default="absolute", help="Use absolute threshold or quantile split for labels")
+    p.add_argument("--q-low", type=float, default=0.3, help="Low quantile for quantile threshold mode")
+    p.add_argument("--q-high", type=float, default=0.7, help="High quantile for quantile threshold mode")
     p.add_argument("--test-size", type=float, default=0.2, help="Test split size")
     p.add_argument("--random-state", type=int, default=42, help="Random seed")
     p.add_argument("--limit", type=int, default=None, help="Limit number of tweets for quick training")
@@ -256,6 +378,11 @@ def main(argv: Optional[List[str]] = None) -> int:
             labels_label_col=args.labels_label_col,
             output_path=args.output,
             threshold=args.threshold,
+            horizon_minutes=args.horizon_minutes,
+            benchmark_csv=args.benchmark_csv,
+            threshold_mode=args.threshold_mode,
+            q_low=args.q_low,
+            q_high=args.q_high,
             test_size=args.test_size,
             random_state=args.random_state,
             limit=args.limit,

@@ -131,6 +131,22 @@ python train.py \
   --output models/senti1_supervised.joblib
 ```
 
+Intraday/abnormal-returns labeling (weak supervision):
+```
+python train.py \
+  --tweets-csv stock_tweets.csv \
+  --prices-csv stock_yfinance_data.csv \
+  --horizon-minutes 120 \
+  --benchmark-csv spy_prices.csv \
+  --threshold-mode quantile \
+  --q-low 0.3 \
+  --q-high 0.7 \
+  --classifier logreg \
+  --class-weight balanced \
+  --output models/senti1_weak_v2.joblib \
+  --limit 100000
+```
+
 ## Evaluate senti1 vs VADER
 Compare your trained model against VADER on labeled data (either pre-labeled, or derived from prices like training):
 
@@ -214,6 +230,20 @@ python train.py \
 ```
 
 ## Project Plan (agreed scope)
+
+## Backtesting aggregated signals
+Compute a simple daily signal → forward returns IC and hit-rate:
+```
+python backtest.py \
+  --model models/senti1_supervised.joblib \
+  --corpus-csv stock_tweets.csv \
+  --prices-csv stock_yfinance_data.csv \
+  --text-col Tweet \
+  --date-col Date \
+  --stock-col "Stock Name" \
+  --horizon-days 1
+```
+Output includes number of days, IC (correlation of sentiment vs next-day return), and hit-rate (directional accuracy).
 
 1) Supervised + Weak Training
 - Supervised: train on labeled finance datasets (e.g., `renamed_data.csv` with text,label) to create `senti1_supervised`.
