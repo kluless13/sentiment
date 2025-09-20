@@ -283,10 +283,15 @@ Summary of trained models, datasets, and key metrics observed in this repo.
 | Model path | Training data | Labeling | Classifier | Notable settings | Accuracy | Weighted F1 | Macro F1 | Notes |
 |---|---|---|---|---|---:|---:|---:|---|
 | `models/senti1_supervised.joblib` | `renamed_data.csv` (finance labeled) | Supervised labels (Sentiment) | LogisticRegression | class_weight=balanced | ~0.680 | ~0.676 | ~0.598 | Strong neutral/positive; negative weaker. Good supervised baseline. |
-| `models/senti1_weak_v2.joblib` | `stock_tweets.csv` | Weak (intraday, 120m horizon, quantile 0.3/0.7) | LogisticRegression | class_weight=balanced | ~0.934 | ~0.914 | ~0.494 | Heavily neutral; low bullish/bearish recall. Adjust thresholds to rebalance. |
 | `models/senti1.joblib` | `stock_tweets.csv` | Weak (daily, 2% absolute threshold) | LogisticRegression | time-split | ~0.696 | ~0.696 | – | Balanced across classes; good weak baseline. |
 | `models/senti1_svm.joblib` | `stock_tweets.csv` | Weak (daily) | LinearSVC | – | ~0.690 | ~0.685 | – | Close to LR; different precision/recall trade-offs. |
-| `models/sentiment_pipeline.joblib` | `stock_tweets.csv` | Weak (daily, 1% absolute threshold) | LogisticRegression | – | ~0.456 | ~0.422 | – | Early baseline; much weaker. |
+| `models/senti1_weak_v2.joblib` | `stock_tweets.csv` | Weak (intraday, 120m, quantile 0.3/0.7) | LogisticRegression | class_weight=balanced | ~0.934 | ~0.914 | ~0.494 | Neutral‑heavy; aligned eval expected similar to v3. |
+| `models/senti1_weak_v3.joblib` | `stock_tweets.csv` | Weak (intraday, 120m, quantile 0.4/0.6) | LogisticRegression | aligned intraday eval | 0.9516 | 0.9359 | 0.5312 | Neutral recall ~1.0; bullish/bearish recall low. |
+| `models/senti1_weak_abs005.joblib` | `stock_tweets.csv` | Weak (intraday, 120m, ±0.5% absolute) | LogisticRegression | aligned intraday eval | 0.9586 | 0.9451 | 0.5363 | Neutral‑heavy; slightly higher overall. |
+| `models/senti1_news_headlines.joblib` | `Combined_News_DJIA.csv` | Supervised (per‑headline, daily up/down) | LogisticRegression | class_weight=balanced | 0.5065 | 0.5067 | 0.5044 | Noisy task; per‑headline from day label. |
+| `models/senti1_news_daily.joblib` | `Combined_News_DJIA.csv` | Supervised (daily aggregated doc) | LinearSVC | ngram_max=3, min_df=3, max_df=0.95, time-split | 0.5013 | 0.4984 | 0.498 | Daily concat didn’t lift accuracy. |
+| `models/senti1_news_daily_lr.joblib` | `Combined_News_DJIA.csv` | Supervised (daily aggregated doc) | LogisticRegression | class_weight=balanced, ngram_max=3, min_df=3, max_df=0.95, time-split | 0.5022 | 0.5020 | 0.502 | Similar to SVM; near coin‑flip. |
+| `models/sentiment_pipeline.joblib` | `stock_tweets.csv` | Weak (daily, 1% absolute threshold) | LogisticRegression | – | 0.4560 | 0.4216 | – | Early baseline; much weaker. |
 
 Note: Metrics are from held-out splits in this repo’s runs and are indicative, not absolute. Always validate out-of-time and via backtests.
 
