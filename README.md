@@ -245,6 +245,19 @@ python backtest.py \
 ```
 Output includes number of days, IC (correlation of sentiment vs next-day return), and hit-rate (directional accuracy).
 
+## Models and scores
+Summary of trained models, datasets, and key metrics observed in this repo.
+
+| Model path | Training data | Labeling | Classifier | Notable settings | Accuracy | Weighted F1 | Macro F1 | Notes |
+|---|---|---|---|---|---:|---:|---:|---|
+| `models/senti1_supervised.joblib` | `renamed_data.csv` (finance labeled) | Supervised labels (Sentiment) | LogisticRegression | class_weight=balanced | ~0.680 | ~0.676 | ~0.598 | Strong neutral/positive; negative weaker. Good supervised baseline. |
+| `models/senti1_weak_v2.joblib` | `stock_tweets.csv` | Weak (intraday, 120m horizon, quantile 0.3/0.7) | LogisticRegression | class_weight=balanced | ~0.934 | ~0.914 | ~0.494 | Heavily neutral; low bullish/bearish recall. Adjust thresholds to rebalance. |
+| `models/senti1.joblib` | `stock_tweets.csv` | Weak (daily, 2% absolute threshold) | LogisticRegression | time-split | ~0.696 | ~0.696 | – | Balanced across classes; good weak baseline. |
+| `models/senti1_svm.joblib` | `stock_tweets.csv` | Weak (daily) | LinearSVC | – | ~0.690 | ~0.685 | – | Close to LR; different precision/recall trade-offs. |
+| `models/sentiment_pipeline.joblib` | `stock_tweets.csv` | Weak (daily, 1% absolute threshold) | LogisticRegression | – | ~0.456 | ~0.422 | – | Early baseline; much weaker. |
+
+Note: Metrics are from held-out splits in this repo’s runs and are indicative, not absolute. Always validate out-of-time and via backtests.
+
 1) Supervised + Weak Training
 - Supervised: train on labeled finance datasets (e.g., `renamed_data.csv` with text,label) to create `senti1_supervised`.
 - Weak: train on large social corpora with improved labels (intraday windows and abnormal returns) to create `senti1_weak_v2`.
