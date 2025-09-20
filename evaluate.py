@@ -43,6 +43,11 @@ def label_from_prices(
     tweets_csv: str,
     prices_csv: str,
     threshold: float,
+    horizon_minutes: int = None,
+    threshold_mode: str = "absolute",
+    q_low: float = 0.3,
+    q_high: float = 0.7,
+    benchmark_csv: str = None,
     tweet_text_col: str = "Tweet",
     tweet_date_col: str = "Date",
     tweet_symbol_col: str = "Stock Name",
@@ -82,28 +87,85 @@ def label_from_prices(
         p_sym = p[p[price_symbol_col] == sym].sort_values(price_date_col)
         if t_sym.empty or p_sym.empty:
             continue
-        prev = pd.merge_asof(
-            t_sym,
-            p_sym[[price_date_col, price_close_col]].rename(columns={price_date_col: tweet_date_col}),
-            on=tweet_date_col,
-            direction="backward",
-        ).rename(columns={price_close_col: "prev_close"})
-        nxt = pd.merge_asof(
-            t_sym,
-            p_sym[[price_date_col, price_close_col]].rename(columns={price_date_col: tweet_date_col}),
-            on=tweet_date_col,
-            direction="forward",
-        ).rename(columns={price_close_col: "next_close"})
-        df_sym = prev[[tweet_date_col, tweet_symbol_col, tweet_text_col]].copy()
-        df_sym["prev_close"] = prev["prev_close"].values
-        df_sym["next_close"] = nxt["next_close"].values
+        if horizon_minutes is None:
+            prev = pd.merge_asof(
+                t_sym,
+                p_sym[[price_date_col, price_close_col]].rename(columns={price_date_col: tweet_date_col}),
+                on=tweet_date_col,
+                direction="backward",
+            ).rename(columns={price_close_col: "prev_close"})
+            nxt = pd.merge_asof(
+                t_sym,
+                p_sym[[price_date_col, price_close_col]].rename(columns={price_date_col: tweet_date_col}),
+                on=tweet_date_col,
+                direction="forward",
+            ).rename(columns={price_close_col: "next_close"})
+            df_sym = prev[[tweet_date_col, tweet_symbol_col, tweet_text_col]].copy()
+            df_sym["prev_close"] = prev["prev_close"].values
+            df_sym["next_close"] = nxt["next_close"].values
+        else:
+            # Intraday horizon
+            base = pd.merge_asof(
+                t_sym[[tweet_date_col, tweet_symbol_col]],
+                p_sym[[price_date_col, price_close_col]].rename(columns={price_date_col: tweet_date_col}),
+                on=tweet_date_col,
+                direction="backward",
+            ).rename(columns={price_close_col: "p0"})
+            fut_times = t_sym[[tweet_date_col]].copy()
+            fut_times[tweet_date_col] = pd.to_datetime(fut_times[tweet_date_col]) + pd.to_timedelta(horizon_minutes, unit="m")
+            fut = pd.merge_asof(
+                fut_times.sort_values(tweet_date_col),
+                p_sym[[price_date_col, price_close_col]].rename(columns={price_date_col: tweet_date_col}),
+                on=tweet_date_col,
+                direction="backward",
+            ).rename(columns={price_close_col: "p1"})
+            df_sym = base[[tweet_date_col, tweet_symbol_col]].copy()
+            df_sym["p0"] = base["p0"].values
+            df_sym["p1"] = fut["p1"].values
+            df_sym = df_sym.join(t_sym[[tweet_text_col]].reset_index(drop=True))
         frames.append(df_sym)
     if not frames:
         raise ValueError("No aligned data for labeling.")
     df = pd.concat(frames, ignore_index=True)
-    df = df.dropna(subset=["prev_close", "next_close"])  # drop entries lacking adjacent price
-    ret = (df["next_close"].astype(float) / df["prev_close"].astype(float)) - 1.0
-    df["label"] = np.where(ret > threshold, "bullish", np.where(ret < -threshold, "bearish", "neutral"))
+    if horizon_minutes is None:
+        df = df.dropna(subset=["prev_close", "next_close"])  # drop entries lacking adjacent price
+        ret = (df["next_close"].astype(float) / df["prev_close"].astype(float)) - 1.0
+    else:
+        df = df.dropna(subset=["p0", "p1"])  # drop entries lacking intraday prices
+        ret = (df["p1"].astype(float) / df["p0"].astype(float)) - 1.0
+
+    # Abnormal returns option
+    if benchmark_csv and horizon_minutes is not None:
+        b = pd.read_csv(benchmark_csv)
+        if "Date" not in b.columns or "Close" not in b.columns:
+            raise ValueError("Benchmark CSV must have Date, Close")
+        b["Date"] = pd.to_datetime(b["Date"], utc=False, errors="coerce")
+        b = b.sort_values("Date").reset_index(drop=True)
+        # Compute benchmark base and future
+        base_b = pd.merge_asof(
+            t[[tweet_date_col]].sort_values(tweet_date_col),
+            b[["Date", "Close"]].rename(columns={"Date": tweet_date_col}),
+            on=tweet_date_col,
+            direction="backward",
+        ).rename(columns={"Close": "b0"})
+        fut_b_times = t[[tweet_date_col]].copy()
+        fut_b_times[tweet_date_col] = pd.to_datetime(fut_b_times[tweet_date_col]) + pd.to_timedelta(horizon_minutes, unit="m")
+        fut_b = pd.merge_asof(
+            fut_b_times.sort_values(tweet_date_col),
+            b[["Date", "Close"]].rename(columns={"Date": tweet_date_col}),
+            on=tweet_date_col,
+            direction="backward",
+        ).rename(columns={"Close": "b1"})
+        mask = base_b["b0"].notna() & fut_b["b1"].notna()
+        bench_ret = (fut_b.loc[mask, "b1"].astype(float) / base_b.loc[mask, "b0"].astype(float)) - 1.0
+        ret.loc[mask] = ret.loc[mask] - bench_ret.values
+
+    if threshold_mode == "quantile" and len(ret.dropna()) > 0:
+        lo = float(np.quantile(ret.dropna(), q_low))
+        hi = float(np.quantile(ret.dropna(), q_high))
+        df["label"] = np.where(ret > hi, "bullish", np.where(ret < lo, "bearish", "neutral"))
+    else:
+        df["label"] = np.where(ret > threshold, "bullish", np.where(ret < -threshold, "bearish", "neutral"))
     df = df.rename(columns={tweet_text_col: "text"})
     return df[["text", "label"]]
 
@@ -141,6 +203,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     src.add_argument("--tweets-csv", help="Tweets CSV to derive labels from prices")
     p.add_argument("--prices-csv", help="Prices CSV for labeling (required if --tweets-csv used)")
     p.add_argument("--threshold", type=float, default=0.01, help="Return threshold for labeling when deriving")
+    p.add_argument("--horizon-minutes", type=int, default=None, help="Intraday horizon (minutes) for labeling")
+    p.add_argument("--threshold-mode", choices=["absolute", "quantile"], default="absolute")
+    p.add_argument("--q-low", type=float, default=0.3)
+    p.add_argument("--q-high", type=float, default=0.7)
+    p.add_argument("--benchmark-csv", default=None, help="Benchmark prices CSV (Date, Close) for abnormal returns")
     p.add_argument("--model", required=True, help="Path to trained scikit model (e.g., models/senti1.joblib)")
     p.add_argument("--skip-vader", action="store_true", help="Skip VADER evaluation if not installed or for speed")
     p.add_argument("--limit", type=int, default=None, help="Limit examples for quick evaluation")
@@ -161,6 +228,11 @@ def main(argv: Optional[List[str]] = None) -> int:
                 tweets_csv=args.tweets_csv,
                 prices_csv=args.prices_csv,
                 threshold=args.threshold,
+                horizon_minutes=args.horizon_minutes,
+                threshold_mode=args.threshold_mode,
+                q_low=args.q_low,
+                q_high=args.q_high,
+                benchmark_csv=args.benchmark_csv,
                 limit=args.limit,
             )
 

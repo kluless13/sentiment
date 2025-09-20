@@ -170,6 +170,17 @@ python evaluate.py \
 
 It prints JSON containing accuracy, weighted F1, and a classification report for both VADER and your model.
 
+Aligned intraday evaluation (matches intraday training):
+```
+python evaluate.py \
+  --tweets-csv stock_tweets.csv \
+  --prices-csv stock_yfinance_data.csv \
+  --horizon-minutes 120 \
+  --threshold-mode quantile --q-low 0.4 --q-high 0.6 \
+  --model models/senti1_weak_v3.joblib \
+  --limit 20000
+```
+
 ### Example evaluation result
 From a run on ~19,888 examples (threshold 1%):
 ```
