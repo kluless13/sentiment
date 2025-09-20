@@ -168,8 +168,8 @@ def train_model(
         for col in [text_col, label_col]:
             if col not in df.columns:
                 raise ValueError(f"Labels CSV missing column '{col}'. Columns: {list(df.columns)}")
-        labeled = df[[text_col, label_col]].rename(columns={text_col: "text"}).copy()
-        labeled["text"] = labeled["text"].astype(str)
+        labeled = df[[text_col, label_col]].rename(columns={text_col: "text", label_col: "label"}).copy()
+        labeled["text"] = labeled["text"].astype(str).map(normalize_text)
     else:
         tweets = load_tweets(tweets_csv)
         if limit is not None and limit > 0:
@@ -182,18 +182,21 @@ def train_model(
             if "label" not in tweets.columns:
                 raise ValueError("When prices_csv is not provided, tweets CSV must include a 'label' column or use --labels-csv.")
             labeled = tweets.rename(columns={"Tweet": "text"}).copy()
+            labeled["text"] = labeled["text"].astype(str).map(normalize_text)
 
-    text_col = "Tweet" if "Tweet" in labeled.columns else ("text" if "text" in labeled.columns else None)
-    if text_col is None:
-        raise ValueError("Could not find text column ('Tweet' or 'text').")
+    # If using time-based split, sort by Date when available to preserve temporal order
+    if time_split and "Date" in labeled.columns:
+        labeled = labeled.sort_values("Date").reset_index(drop=True)
 
-    labeled = labeled[[text_col, "label"]].dropna().rename(columns={text_col: "text"})
+    # Keep only text and label for modeling
+    if "text" not in labeled.columns or "label" not in labeled.columns:
+        raise ValueError("Prepared dataset must contain 'text' and 'label' columns.")
+    labeled = labeled[["text", "label"]].dropna()
     # Drop empty strings
     labeled = labeled[labeled["text"].str.len() > 0]
 
-    if time_split and "Date" in (tweets.columns if prices_csv else tweets.columns):
-        # If possible, do a time-based split using the original tweets order
-        # Fallback to random if not available
+    if time_split and len(labeled) > 1:
+        # Use the current order (sorted by Date if present) for a simple time split
         X = labeled["text"].values
         y = labeled["label"].values
         cut = int((1 - test_size) * len(labeled))
