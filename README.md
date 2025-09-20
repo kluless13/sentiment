@@ -141,6 +141,17 @@ python train.py \
 ```
 This explodes Top1..Top25 per day into per‑headline rows and maps `Label` 1→bullish, 0→bearish.
 
+Daily aggregation variant (one doc per day) and tuning:
+```
+python train.py \
+  --djia-news-csv news_sentiment/Combined_News_DJIA.csv \
+  --djia-news-aggregate \
+  --classifier svm \
+  --ngram-max 3 --min-df 3 --max-df 0.95 \
+  --time-split \
+  --output models/senti1_news_daily.joblib
+```
+
 Intraday/abnormal-returns labeling (weak supervision):
 ```
 python train.py \

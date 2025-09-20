@@ -62,7 +62,7 @@ def load_prices(csv_path: str, date_col: str = "Date", close_col: str = "Close",
     return df
 
 
-def load_combined_news_djia(csv_path: str) -> pd.DataFrame:
+def load_combined_news_djia(csv_path: str, aggregate_daily: bool = False) -> pd.DataFrame:
     if not os.path.exists(csv_path):
         raise FileNotFoundError(f"Combined_News_DJIA CSV not found: {csv_path}")
     df = pd.read_csv(csv_path)
@@ -72,17 +72,33 @@ def load_combined_news_djia(csv_path: str) -> pd.DataFrame:
     headline_cols = [c for c in df.columns if c.lower().startswith("top")]
     if not headline_cols:
         raise ValueError("No Top1..Top25 columns found in Combined_News_DJIA")
-    rows = []
-    for _idx, row in df.iterrows():
-        label = int(row["Label"]) if pd.notna(row["Label"]) else 0
-        for c in headline_cols:
-            h = row.get(c, None)
-            if isinstance(h, str) and h.strip():
-                rows.append({"Date": row["Date"], "text": normalize_text(h), "label": "bullish" if label == 1 else "bearish"})
-    out = pd.DataFrame(rows)
-    out["Date"] = pd.to_datetime(out["Date"], utc=False, errors="coerce")
-    out = out.dropna(subset=["Date", "text"]) 
-    return out
+    if not aggregate_daily:
+        rows = []
+        for _idx, row in df.iterrows():
+            label = int(row["Label"]) if pd.notna(row["Label"]) else 0
+            for c in headline_cols:
+                h = row.get(c, None)
+                if isinstance(h, str) and h.strip():
+                    rows.append({"Date": row["Date"], "text": normalize_text(h), "label": "bullish" if label == 1 else "bearish"})
+        out = pd.DataFrame(rows)
+        out["Date"] = pd.to_datetime(out["Date"], utc=False, errors="coerce")
+        out = out.dropna(subset=["Date", "text"]) 
+        return out
+    else:
+        rows = []
+        for _idx, row in df.iterrows():
+            label = int(row["Label"]) if pd.notna(row["Label"]) else 0
+            texts = []
+            for c in headline_cols:
+                h = row.get(c, None)
+                if isinstance(h, str) and h.strip():
+                    texts.append(normalize_text(h))
+            if texts:
+                rows.append({"Date": row["Date"], "text": " \n ".join(texts), "label": "bullish" if label == 1 else "bearish"})
+        out = pd.DataFrame(rows)
+        out["Date"] = pd.to_datetime(out["Date"], utc=False, errors="coerce")
+        out = out.dropna(subset=["Date", "text"]) 
+        return out
 
 
 def label_by_forward_return(
@@ -244,13 +260,16 @@ def label_by_horizon(
 def build_pipeline(
     classifier: str = "logreg",
     class_weight: Optional[str] = None,
+    ngram_max: int = 2,
+    min_df: int = 2,
+    max_df: float = 0.9,
 ) -> Pipeline:
     vectorizer = TfidfVectorizer(
         lowercase=True,
         stop_words="english",
-        ngram_range=(1, 2),
-        min_df=2,
-        max_df=0.9,
+        ngram_range=(1, ngram_max),
+        min_df=min_df,
+        max_df=max_df,
     )
     if classifier == "svm":
         clf = LinearSVC()
@@ -285,9 +304,12 @@ def train_model(
     classifier: str,
     class_weight: Optional[str],
     time_split: bool,
+    ngram_max: int,
+    min_df: int,
+    max_df: float,
 ) -> None:
     if djia_news_csv:
-        labeled = load_combined_news_djia(djia_news_csv)
+        labeled = load_combined_news_djia(djia_news_csv, aggregate_daily=bool(os.environ.get("DJIA_AGG", "0") == "1") or False)
     elif labels_csv:
         if not os.path.exists(labels_csv):
             raise FileNotFoundError(f"Labels CSV not found: {labels_csv}")
@@ -361,7 +383,7 @@ def train_model(
             stratify=labeled["label"].values,
         )
 
-    pipeline = build_pipeline(classifier=classifier, class_weight=class_weight)
+    pipeline = build_pipeline(classifier=classifier, class_weight=class_weight, ngram_max=ngram_max, min_df=min_df, max_df=max_df)
     pipeline.fit(X_train, y_train)
 
     y_pred = pipeline.predict(X_test)
@@ -381,6 +403,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--prices-csv", default=None, help="Path to prices CSV to derive labels (optional)")
     p.add_argument("--labels-csv", default=None, help="Path to pre-labeled CSV for supervised training")
     p.add_argument("--djia-news-csv", default=None, help="Path to Combined_News_DJIA.csv to train a headline model")
+    p.add_argument("--djia-news-aggregate", action="store_true", help="Aggregate Top1..Top25 per day into one document")
     p.add_argument("--labels-text-col", default=None, help="Text column name in labels CSV (default: text)")
     p.add_argument("--labels-label-col", default=None, help="Label column name in labels CSV (default: label)")
     p.add_argument("--output", default="models/sentiment_pipeline.joblib", help="Output path for model")
@@ -396,6 +419,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--classifier", choices=["logreg", "svm"], default="logreg", help="Classifier choice")
     p.add_argument("--class-weight", choices=["balanced", "none"], default="none", help="Class weighting for logistic regression")
     p.add_argument("--time-split", action="store_true", help="Use a simple time-based split instead of random split")
+    p.add_argument("--ngram-max", type=int, default=2, help="Max n-gram size for TF-IDF (default 2)")
+    p.add_argument("--min-df", type=int, default=2, help="Min document frequency for TF-IDF (default 2)")
+    p.add_argument("--max-df", type=float, default=0.9, help="Max document fraction for TF-IDF (default 0.9)")
     p.add_argument("-v", action="count", default=0, help="Increase verbosity (-v, -vv)")
     return p
 
@@ -424,6 +450,9 @@ def main(argv: Optional[List[str]] = None) -> int:
             classifier=args.classifier,
             class_weight=(None if args.class_weight == "none" else "balanced"),
             time_split=args.time_split,
+            ngram_max=args.ngram_max,
+            min_df=args.min_df,
+            max_df=args.max_df,
         )
         return 0
     except Exception as exc:
