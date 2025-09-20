@@ -162,6 +162,7 @@ python train.py \
   --threshold-mode quantile \
   --q-low 0.3 \
   --q-high 0.7 \
+  --downsample-neutral --neutral-factor 1.0 \
   --classifier logreg \
   --class-weight balanced \
   --output models/senti1_weak_v2.joblib \
@@ -263,6 +264,20 @@ python train.py \
 
 ## Project Plan (agreed scope)
 
+## Parameter sweep (intraday finance)
+Find better directional recall/IC by sweeping neutral downsampling and backtest filters:
+```
+python sweep_intraday.py \
+  --tweets-csv stock_tweets.csv \
+  --prices-csv stock_yfinance_data.csv \
+  --horizon-minutes 120 \
+  --q-low 0.3 --q-high 0.7 \
+  --neutral-factors 0.5,0.75,1.0 \
+  --min-docs-list 5,10 \
+  --min-abs-scores 0.1,0.2,0.3 \
+  --limit 100000
+```
+The script prints JSON with training metrics and backtest IC/hit-rate per configuration.
 ## Backtesting aggregated signals
 Compute a simple daily signal → forward returns IC and hit-rate:
 ```
@@ -273,7 +288,10 @@ python backtest.py \
   --text-col Tweet \
   --date-col Date \
   --stock-col "Stock Name" \
-  --horizon-days 1
+  --horizon-days 1 \
+  --min-docs 10 \
+  --min-abs-score 0.2 \
+  --benchmark-csv spy_prices.csv
 ```
 Output includes number of days, IC (correlation of sentiment vs next-day return), and hit-rate (directional accuracy).
 
@@ -294,6 +312,14 @@ Summary of trained models, datasets, and key metrics observed in this repo.
 | `models/finance_tweets_daily_oldbaseline_v0.joblib` | `stock_tweets.csv` | Weak (daily, 1% abs) | LogisticRegression | – | 0.4560 | 0.4216 | – | Early baseline. |
 
 Note: Metrics are from held-out splits in this repo’s runs and are indicative, not absolute. Always validate out-of-time and via backtests.
+
+### Current aliases
+- `models/finance_current.joblib`: finance/ticker supervised baseline.
+- `models/macro_current.joblib`: macro daily news baseline.
+- `models/finance_signals_current.joblib`: finance intraday signals model (selected by sweep):
+  - trained with q_low=0.3, q_high=0.7, neutral_factor=1.0
+  - backtest filters: min_docs=10, min_abs_score=0.2
+  - observed IC≈0.1252, hit_rate≈0.558
 
 1) Supervised + Weak Training
 - Supervised: train on labeled finance datasets (e.g., `renamed_data.csv` with text,label) to create `senti1_supervised`.
