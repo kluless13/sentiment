@@ -147,6 +147,9 @@ def build_pipeline(
 def train_model(
     tweets_csv: str,
     prices_csv: Optional[str],
+    labels_csv: Optional[str],
+    labels_text_col: Optional[str],
+    labels_label_col: Optional[str],
     output_path: str,
     threshold: float,
     test_size: float,
@@ -156,17 +159,29 @@ def train_model(
     class_weight: Optional[str],
     time_split: bool,
 ) -> None:
-    tweets = load_tweets(tweets_csv)
-    if limit is not None and limit > 0:
-        tweets = tweets.iloc[:limit].copy()
-    if prices_csv:
-        prices = load_prices(prices_csv)
-        labeled = label_by_forward_return(tweets, prices, threshold=threshold)
+    if labels_csv:
+        if not os.path.exists(labels_csv):
+            raise FileNotFoundError(f"Labels CSV not found: {labels_csv}")
+        df = pd.read_csv(labels_csv)
+        text_col = labels_text_col or "text"
+        label_col = labels_label_col or "label"
+        for col in [text_col, label_col]:
+            if col not in df.columns:
+                raise ValueError(f"Labels CSV missing column '{col}'. Columns: {list(df.columns)}")
+        labeled = df[[text_col, label_col]].rename(columns={text_col: "text"}).copy()
+        labeled["text"] = labeled["text"].astype(str)
     else:
-        # Expect a pre-labeled CSV with 'label' column
-        if "label" not in tweets.columns:
-            raise ValueError("When prices_csv is not provided, tweets CSV must include a 'label' column.")
-        labeled = tweets.rename(columns={"Tweet": "text"}).copy()
+        tweets = load_tweets(tweets_csv)
+        if limit is not None and limit > 0:
+            tweets = tweets.iloc[:limit].copy()
+        if prices_csv:
+            prices = load_prices(prices_csv)
+            labeled = label_by_forward_return(tweets, prices, threshold=threshold)
+        else:
+            # Expect a pre-labeled CSV with 'label' column in tweets
+            if "label" not in tweets.columns:
+                raise ValueError("When prices_csv is not provided, tweets CSV must include a 'label' column or use --labels-csv.")
+            labeled = tweets.rename(columns={"Tweet": "text"}).copy()
 
     text_col = "Tweet" if "Tweet" in labeled.columns else ("text" if "text" in labeled.columns else None)
     if text_col is None:
@@ -209,8 +224,11 @@ def train_model(
 
 def build_arg_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Train a TF-IDF + LogisticRegression sentiment model")
-    p.add_argument("--tweets-csv", required=True, help="Path to tweets CSV (must have Tweet, Date, Stock Name)")
+    p.add_argument("--tweets-csv", default=None, help="Path to tweets CSV (must have Tweet, Date, Stock Name) when deriving labels")
     p.add_argument("--prices-csv", default=None, help="Path to prices CSV to derive labels (optional)")
+    p.add_argument("--labels-csv", default=None, help="Path to pre-labeled CSV for supervised training")
+    p.add_argument("--labels-text-col", default=None, help="Text column name in labels CSV (default: text)")
+    p.add_argument("--labels-label-col", default=None, help="Label column name in labels CSV (default: label)")
     p.add_argument("--output", default="models/sentiment_pipeline.joblib", help="Output path for model")
     p.add_argument("--threshold", type=float, default=0.01, help="Return threshold for labels (e.g., 0.01 = 1%)")
     p.add_argument("--test-size", type=float, default=0.2, help="Test split size")
@@ -230,6 +248,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         train_model(
             tweets_csv=args.tweets_csv,
             prices_csv=args.prices_csv,
+            labels_csv=args.labels_csv,
+            labels_text_col=args.labels_text_col,
+            labels_label_col=args.labels_label_col,
             output_path=args.output,
             threshold=args.threshold,
             test_size=args.test_size,

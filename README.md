@@ -120,6 +120,17 @@ Notes:
 - For pre-labeled data, ensure a `label` column exists; omit `--prices-csv`.
 - To name your custom model "senti1", save to `models/senti1.joblib` instead of the default.
 
+Supervised training on a labeled CSV:
+```
+python train.py \
+  --labels-csv renamed_data.csv \
+  --labels-text-col Sentence \
+  --labels-label-col Sentiment \
+  --classifier logreg \
+  --class-weight balanced \
+  --output models/senti1_supervised.joblib
+```
+
 ## Evaluate senti1 vs VADER
 Compare your trained model against VADER on labeled data (either pre-labeled, or derived from prices like training):
 
@@ -201,5 +212,36 @@ python train.py \
   --output models/senti1_svm.joblib \
   --limit 100000
 ```
+
+## Project Plan (agreed scope)
+
+1) Supervised + Weak Training
+- Supervised: train on labeled finance datasets (e.g., `renamed_data.csv` with text,label) to create `senti1_supervised`.
+- Weak: train on large social corpora with improved labels (intraday windows and abnormal returns) to create `senti1_weak_v2`.
+- Model selection: compare LR, LinearSVC, and FinBERT baseline; target weighted F1 ≥ 0.70 on held‑out finance/macro sets.
+
+2) Data Alignment & Label Quality
+- Intraday price alignment (30m/2h/1d windows) and quantile thresholds.
+- Abnormal returns vs market/sector benchmarks (e.g., SPY) to reduce market beta.
+- Event windows for news (earnings headlines) for macro/event generalization.
+
+3) Aggregation & Backtesting
+- Aggregate per ticker/day/hour: mean score, class mix, confidence, simple weighting by recency/engagement.
+- Backtest daily signals: IC, hit-rate, PnL with costs; compare against baseline (zero and naive momentum).
+
+4) Serving & Integration
+- Expose FastAPI endpoints: `/analyze` (single/batch text), `/aggregate` (by ticker/window), `/health`.
+- Return JSON with label, score, confidence, top keywords. Provide Python SDK usage.
+- Latency targets: classical <200ms, transformer <500ms per doc on CPU; batch for throughput.
+
+5) Ops & Quality
+- Logging, retries, and rate-limits for collectors.
+- Unit tests (collectors, preprocess, analyzer, aggregator) and integration tests (E2E).
+- Documentation: usage, API, examples; add CI for lint/test.
+
+Milestones
+- M1: Supervised training from labeled CSV + evaluation and README results.
+- M2: Intraday weak labels + backtester + refreshed evaluation.
+- M3: FastAPI service + SDK + FE integration guide.
 
 
