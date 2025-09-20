@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
+from sklearn.svm import LinearSVC
 from sklearn.metrics import classification_report, f1_score
 from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
@@ -119,31 +120,28 @@ def label_by_forward_return(
     return df
 
 
-def build_pipeline() -> Pipeline:
-    return Pipeline(
-        steps=[
-            (
-                "tfidf",
-                TfidfVectorizer(
-                    lowercase=True,
-                    stop_words="english",
-                    ngram_range=(1, 2),
-                    min_df=2,
-                    max_df=0.9,
-                ),
-            ),
-            (
-                "clf",
-                LogisticRegression(
-                    max_iter=300,
-                    solver="liblinear",
-                    multi_class="auto",
-                    class_weight=None,
-                    n_jobs=None,
-                ),
-            ),
-        ]
+def build_pipeline(
+    classifier: str = "logreg",
+    class_weight: Optional[str] = None,
+) -> Pipeline:
+    vectorizer = TfidfVectorizer(
+        lowercase=True,
+        stop_words="english",
+        ngram_range=(1, 2),
+        min_df=2,
+        max_df=0.9,
     )
+    if classifier == "svm":
+        clf = LinearSVC()
+    else:
+        clf = LogisticRegression(
+            max_iter=300,
+            solver="liblinear",
+            multi_class="auto",
+            class_weight=class_weight,
+            n_jobs=None,
+        )
+    return Pipeline(steps=[("tfidf", vectorizer), ("clf", clf)])
 
 
 def train_model(
@@ -154,6 +152,9 @@ def train_model(
     test_size: float,
     random_state: int,
     limit: Optional[int],
+    classifier: str,
+    class_weight: Optional[str],
+    time_split: bool,
 ) -> None:
     tweets = load_tweets(tweets_csv)
     if limit is not None and limit > 0:
@@ -175,15 +176,24 @@ def train_model(
     # Drop empty strings
     labeled = labeled[labeled["text"].str.len() > 0]
 
-    X_train, X_test, y_train, y_test = train_test_split(
-        labeled["text"].values,
-        labeled["label"].values,
-        test_size=test_size,
-        random_state=random_state,
-        stratify=labeled["label"].values,
-    )
+    if time_split and "Date" in (tweets.columns if prices_csv else tweets.columns):
+        # If possible, do a time-based split using the original tweets order
+        # Fallback to random if not available
+        X = labeled["text"].values
+        y = labeled["label"].values
+        cut = int((1 - test_size) * len(labeled))
+        X_train, X_test = X[:cut], X[cut:]
+        y_train, y_test = y[:cut], y[cut:]
+    else:
+        X_train, X_test, y_train, y_test = train_test_split(
+            labeled["text"].values,
+            labeled["label"].values,
+            test_size=test_size,
+            random_state=random_state,
+            stratify=labeled["label"].values,
+        )
 
-    pipeline = build_pipeline()
+    pipeline = build_pipeline(classifier=classifier, class_weight=class_weight)
     pipeline.fit(X_train, y_train)
 
     y_pred = pipeline.predict(X_test)
@@ -191,7 +201,7 @@ def train_model(
     report = classification_report(y_test, y_pred, digits=4)
 
     os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
-    joblib.dump({"pipeline": pipeline, "labels": list(sorted(set(y_train)))}, output_path)
+    joblib.dump({"pipeline": pipeline, "labels": list(sorted(set(y_train))), "classifier": classifier, "class_weight": class_weight}, output_path)
 
     logging.info("Saved model to %s", output_path)
     print(json.dumps({"f1_weighted": f1, "report": report}, ensure_ascii=False))
@@ -206,6 +216,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--test-size", type=float, default=0.2, help="Test split size")
     p.add_argument("--random-state", type=int, default=42, help="Random seed")
     p.add_argument("--limit", type=int, default=None, help="Limit number of tweets for quick training")
+    p.add_argument("--classifier", choices=["logreg", "svm"], default="logreg", help="Classifier choice")
+    p.add_argument("--class-weight", choices=["balanced", "none"], default="none", help="Class weighting for logistic regression")
+    p.add_argument("--time-split", action="store_true", help="Use a simple time-based split instead of random split")
     p.add_argument("-v", action="count", default=0, help="Increase verbosity (-v, -vv)")
     return p
 
@@ -222,6 +235,9 @@ def main(argv: Optional[List[str]] = None) -> int:
             test_size=args.test_size,
             random_state=args.random_state,
             limit=args.limit,
+            classifier=args.classifier,
+            class_weight=(None if args.class_weight == "none" else "balanced"),
+            time_split=args.time_split,
         )
         return 0
     except Exception as exc:

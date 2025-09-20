@@ -143,4 +143,48 @@ python evaluate.py \
 
 It prints JSON containing accuracy, weighted F1, and a classification report for both VADER and your model.
 
+### Example evaluation result
+From a run on ~19,888 examples (threshold 1%):
+```
+{
+  "model": {
+    "accuracy": 0.6759,
+    "f1_weighted": 0.6643,
+    "report": "...\n     bearish  F1≈0.659\n     bullish  F1≈0.737\n     neutral  F1≈0.562\n ..."
+  },
+  "vader": {
+    "accuracy": 0.3514,
+    "f1_weighted": 0.3445,
+    "report": "..."
+  },
+  "n": 19888
+}
+```
+Interpretation: the custom model (senti1) substantially outperforms VADER; bullish recall is high, neutral is weaker. Consider time-based split, class weighting, and threshold tuning (see next steps below).
+
+## Next steps (optional improvements)
+- Time-based split to avoid leakage (`--time-split`).
+- Class weighting to improve minority classes (`--class-weight balanced`).
+- Try a different classifier (`--classifier svm`) and compare.
+
+Examples:
+```
+python train.py \
+  --tweets-csv stock_tweets.csv \
+  --prices-csv stock_yfinance_data.csv \
+  --threshold 0.02 \
+  --classifier logreg \
+  --class-weight balanced \
+  --time-split \
+  --output models/senti1.joblib \
+  --limit 100000
+
+python train.py \
+  --tweets-csv stock_tweets.csv \
+  --prices-csv stock_yfinance_data.csv \
+  --classifier svm \
+  --output models/senti1_svm.joblib \
+  --limit 100000
+```
+
 
