@@ -162,6 +162,21 @@ From a run on ~19,888 examples (threshold 1%):
 ```
 Interpretation: the custom model (senti1) substantially outperforms VADER; bullish recall is high, neutral is weaker. Consider time-based split, class weighting, and threshold tuning (see next steps below).
 
+### Interpreting your results
+Recent runs on your data (threshold 2%) showed:
+- senti1 (logreg, class-weight balanced, time-split): accuracy ≈ 0.695, weighted F1 ≈ 0.696
+  - bearish F1 ≈ 0.65, bullish F1 ≈ 0.67, neutral F1 ≈ 0.74
+- senti1_svm (LinearSVC): accuracy ≈ 0.690, weighted F1 ≈ 0.685
+  - tends to have very high precision on neutral but lower recall; bullish/bearish recall can be high
+- VADER: accuracy ≈ 0.32, weighted F1 ≈ 0.32 (much weaker)
+
+Takeaways:
+- Both custom models strongly outperform VADER on these weak labels.
+- The logreg (balanced) model gives the best overall balance; SVM trades recall/precision differently.
+- Neutral is generally harder; improving labels (e.g., time window/threshold) can help.
+
+Notes on labels: These are derived from price moves (weak supervision). They are proxy labels, not ground truth. For production, prefer aggregating sentiment across many texts and validating on downstream metrics (e.g., event reactions or backtests).
+
 ## Next steps (optional improvements)
 - Time-based split to avoid leakage (`--time-split`).
 - Class weighting to improve minority classes (`--class-weight balanced`).
