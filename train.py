@@ -62,6 +62,29 @@ def load_prices(csv_path: str, date_col: str = "Date", close_col: str = "Close",
     return df
 
 
+def load_combined_news_djia(csv_path: str) -> pd.DataFrame:
+    if not os.path.exists(csv_path):
+        raise FileNotFoundError(f"Combined_News_DJIA CSV not found: {csv_path}")
+    df = pd.read_csv(csv_path)
+    if "Date" not in df.columns or "Label" not in df.columns:
+        raise ValueError("Combined_News_DJIA must have Date and Label columns")
+    # Collect Top1..Top25 columns that exist
+    headline_cols = [c for c in df.columns if c.lower().startswith("top")]
+    if not headline_cols:
+        raise ValueError("No Top1..Top25 columns found in Combined_News_DJIA")
+    rows = []
+    for _idx, row in df.iterrows():
+        label = int(row["Label"]) if pd.notna(row["Label"]) else 0
+        for c in headline_cols:
+            h = row.get(c, None)
+            if isinstance(h, str) and h.strip():
+                rows.append({"Date": row["Date"], "text": normalize_text(h), "label": "bullish" if label == 1 else "bearish"})
+    out = pd.DataFrame(rows)
+    out["Date"] = pd.to_datetime(out["Date"], utc=False, errors="coerce")
+    out = out.dropna(subset=["Date", "text"]) 
+    return out
+
+
 def label_by_forward_return(
     tweets: pd.DataFrame,
     prices: pd.DataFrame,
@@ -248,6 +271,7 @@ def train_model(
     labels_csv: Optional[str],
     labels_text_col: Optional[str],
     labels_label_col: Optional[str],
+    djia_news_csv: Optional[str],
     output_path: str,
     threshold: float,
     horizon_minutes: Optional[int],
@@ -262,7 +286,9 @@ def train_model(
     class_weight: Optional[str],
     time_split: bool,
 ) -> None:
-    if labels_csv:
+    if djia_news_csv:
+        labeled = load_combined_news_djia(djia_news_csv)
+    elif labels_csv:
         if not os.path.exists(labels_csv):
             raise FileNotFoundError(f"Labels CSV not found: {labels_csv}")
         df = pd.read_csv(labels_csv)
@@ -354,6 +380,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--tweets-csv", default=None, help="Path to tweets CSV (must have Tweet, Date, Stock Name) when deriving labels")
     p.add_argument("--prices-csv", default=None, help="Path to prices CSV to derive labels (optional)")
     p.add_argument("--labels-csv", default=None, help="Path to pre-labeled CSV for supervised training")
+    p.add_argument("--djia-news-csv", default=None, help="Path to Combined_News_DJIA.csv to train a headline model")
     p.add_argument("--labels-text-col", default=None, help="Text column name in labels CSV (default: text)")
     p.add_argument("--labels-label-col", default=None, help="Label column name in labels CSV (default: label)")
     p.add_argument("--output", default="models/sentiment_pipeline.joblib", help="Output path for model")
@@ -383,6 +410,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             labels_csv=args.labels_csv,
             labels_text_col=args.labels_text_col,
             labels_label_col=args.labels_label_col,
+            djia_news_csv=args.djia_news_csv,
             output_path=args.output,
             threshold=args.threshold,
             horizon_minutes=args.horizon_minutes,

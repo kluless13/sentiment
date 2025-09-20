@@ -131,6 +131,16 @@ python train.py \
   --output models/senti1_supervised.joblib
 ```
 
+News headline model (Combined_News_DJIA):
+```
+python train.py \
+  --djia-news-csv news_sentiment/Combined_News_DJIA.csv \
+  --classifier logreg \
+  --class-weight balanced \
+  --output models/senti1_news_headlines.joblib
+```
+This explodes Top1..Top25 per day into per‑headline rows and maps `Label` 1→bullish, 0→bearish.
+
 Intraday/abnormal-returns labeling (weak supervision):
 ```
 python train.py \
